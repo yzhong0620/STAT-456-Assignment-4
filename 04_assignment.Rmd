@@ -1,0 +1,144 @@
+---
+title: 'Assignment #4'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+```{r libraries}
+library(tidyverse)         # for graphing and data cleaning
+library(dbplyr)            # for SQL query "cheating" - part of tidyverse but needs to be loaded separately
+library(mdsr)              # for accessing some databases - goes with Modern Data Science with R textbook
+library(RMySQL)            # for accessing MySQL databases
+library(RSQLite)           # for accessing SQLite databases
+theme_set(theme_minimal()) # Lisa's favorite theme
+```
+
+When you finish the assignment, remove the `#` from the options chunk at the top, so that messages and warnings aren't printed. If you are getting errors in your code, add `error = TRUE` so that the file knits. I would recommend not removing the `#` until you are completely finished.
+
+## Put it on GitHub!        
+
+[gitHub](https://github.com/yzhong0620/STAT-456-Assignment-4)
+
+## SQL
+
+### **Task 1**:
+
+```{r}
+con_air <- dbConnect_scidb("airlines")
+```
+
+```{r}
+dataset <- tbl(con_air, "flights") %>% 
+  group_by(origin, year, month) %>% 
+  summarize(total_depart = n(),
+            distinct_dest = count(distinct(dest)),
+            ave_length = mean(arr_delay),
+            ave_distance = mean(distance),
+            prop_late = mean(arr_delay > 20)) %>% 
+  ungroup() %>% 
+  inner_join(tbl(con_air, "airports"),
+             by = c("origin" = "faa")) %>% 
+  select(name, year, month, total_depart, distinct_dest, ave_length, ave_distance, prop_late)
+```
+
+```{r}
+show_query(dataset)
+```
+
+```{sql connection=con_air}
+SELECT `name`, `year`, `month`, `total_depart`, `distinct_dest`, `ave_length`, `ave_distance`, `prop_late`
+FROM (SELECT `LHS`.`carrier` AS `carrier`, `year`, `month`, `total_depart`, `distinct_dest`, `ave_length`, `ave_distance`, `prop_late`, `name`
+FROM (SELECT `carrier`, `year`, `month`, COUNT(*) AS `total_depart`, count(distinct(`dest`)) AS `distinct_dest`, AVG(`arr_delay`) AS `ave_length`, AVG(`distance`) AS `ave_distance`, AVG(`arr_delay` > 20.0) AS `prop_late`
+FROM `flights`
+GROUP BY `carrier`, `year`, `month`) `LHS`
+INNER JOIN `carriers` AS `RHS`
+ON (`LHS`.`carrier` = `RHS`.`carrier`)
+) `q01`
+```
+
+```{r, width=15}
+dataset %>% 
+  group_by(name) %>%
+  summarise(ave_prop = mean(prop_late),
+            ave_distance = round(mean(ave_distance), digits = 2)) %>%
+  arrange(desc(ave_prop)) %>% 
+  head(10) %>% 
+  ggplot(aes(x = ave_prop, y = fct_reorder(name, ave_prop))) +
+  geom_col(aes(fill = ave_distance)) +
+  geom_label(aes(label = ave_distance)) +
+  labs(x = "Proportion of flights that arrived more than 20 minutes late", y = "", fill = "Average distance of flights")
+```
+
+```{r}
+library(gt)
+
+dataset %>% 
+  group_by(name) %>% 
+  summarise(ave_prop = mean(prop_late),
+            ave_distance = mean(ave_distance)) %>%
+  arrange(desc(ave_prop)) %>% 
+  head(4) %>% 
+  gt() %>% 
+  tab_header(
+    title = md("**The worst airports in terms of late arrivals**")) %>% 
+  fmt_number(
+    columns = vars(ave_prop),
+    decimals = 2) %>% 
+  fmt_number(
+    columns = vars(ave_distance),
+    decimals = 2) %>%
+  data_color(columns = vars(ave_distance),
+             colors =  scales::col_numeric(palette = "viridis", 
+                                           domain = NULL),
+             alpha = .7) %>% 
+  tab_options(column_labels.background.color = "gray")
+```
+
+### **Task 2**: 
+
+```{r}
+popularity <- tbl(con_air, "flights") %>% 
+  group_by(origin, dest) %>% 
+  summarise(route = paste(origin, dest, sep="->"),
+            total = n(),
+            prop_cancel = round(mean(cancelled), digits = 4)) %>% 
+  ungroup() %>% 
+  select(route, total, prop_cancel)
+```
+
+```{r}
+show_query(popularity)
+```
+
+```{sql connection=con_air}
+SELECT `route`, `total`, `prop_cancel`
+FROM (SELECT `origin`, `dest`, CONCAT_WS('->', `origin`, `dest`) AS `route`, COUNT(*) AS `total`, AVG(`cancelled`) AS `prop_cancel`
+FROM `flights`
+GROUP BY `origin`, `dest`) `q01`
+```
+
+```{r}
+popularity %>% 
+  arrange(desc(total)) %>% 
+  head(10) %>% 
+  ggplot(aes(x = total, y = fct_reorder(route, total))) +
+  geom_col(aes(fill = prop_cancel)) +
+  geom_label(aes(label = prop_cancel)) +
+  labs(x = "Total count of the route", y = "", fill = "Proportion of flights cancelled")
+```
+
+> What are the most popular routes and the proportion of flights cancelled in these routes?
+
+## Shiny app
+
+[gitHub](https://github.com/yzhong0620/shiny)
+
+[app](https://yunyang-zhong.shinyapps.io/shiny/)
